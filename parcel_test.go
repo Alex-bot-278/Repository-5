@@ -6,8 +6,9 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	_ "github.com/go-sql-driver/mysql"
 )
 
 var (
@@ -24,93 +25,100 @@ func getTestParcel() Parcel {
 	}
 }
 
-func TestAddGetDelete(t *testing.T) {
-	// prepare
-	db, err := sql.Open("sqlite3", "tracker.db")
+func setupDB(t *testing.T) *sql.DB {
+	db, err := sql.Open("mysql", "user:password@/dbname")
 	require.NoError(t, err)
+
+	err = db.Ping()
+	require.NoError(t, err)
+
+	// Очищаем таблицу перед тестами
+	_, err = db.Exec("DELETE FROM parcel")
+	require.NoError(t, err)
+
+	return db
+}
+
+func TestAddGetDelete(t *testing.T) {
+	db := setupDB(t)
 	defer db.Close()
 
 	store := NewParcelStore(db)
 	parcel := getTestParcel()
 
-	// add
+	// Add
 	id, err := store.Add(parcel)
-	require.NoError(t, err)
-	require.NotZero(t, id)
+	assert.NoError(t, err)
+	assert.NotZero(t, id)
 
-	// get
+	// Get
 	storedParcel, err := store.Get(id)
-	require.NoError(t, err)
-	require.Equal(t, parcel.Client, storedParcel.Client)
-	require.Equal(t, parcel.Status, storedParcel.Status)
-	require.Equal(t, parcel.Address, storedParcel.Address)
-	require.Equal(t, parcel.CreatedAt, storedParcel.CreatedAt)
+	assert.NoError(t, err)
+	assert.Equal(t, id, storedParcel.Number)  // Проверяем Number
+	assert.Equal(t, parcel.Client, storedParcel.Client)
+	assert.Equal(t, parcel.Status, storedParcel.Status)
+	assert.Equal(t, parcel.Address, storedParcel.Address)
+	assert.Equal(t, parcel.CreatedAt, storedParcel.CreatedAt)
 
-	// delete
+	// Delete
 	err = store.Delete(id)
-	require.NoError(t, err)
+	assert.NoError(t, err)
 
+	// Verify delete
 	_, err = store.Get(id)
-	require.ErrorIs(t, err, sql.ErrNoRows)
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, sql.ErrNoRows)
 }
 
 func TestSetAddress(t *testing.T) {
-	// prepare
-	db, err := sql.Open("sqlite3", "tracker.db")
-	require.NoError(t, err)
+	db := setupDB(t)
 	defer db.Close()
 
 	store := NewParcelStore(db)
 	parcel := getTestParcel()
 
-	// add
+	// Add
 	id, err := store.Add(parcel)
-	require.NoError(t, err)
-	require.NotZero(t, id)
+	assert.NoError(t, err)
 
-	// set address
+	// Set address
 	newAddress := "new test address"
 	err = store.SetAddress(id, newAddress)
-	require.NoError(t, err)
+	assert.NoError(t, err)
 
-	// check
-	storedParcel, err := store.Get(id)
-	require.NoError(t, err)
-	require.Equal(t, newAddress, storedParcel.Address)
+	// Check
+	updatedParcel, err := store.Get(id)
+	assert.NoError(t, err)
+	assert.Equal(t, newAddress, updatedParcel.Address)
 }
 
 func TestSetStatus(t *testing.T) {
-	// prepare
-	db, err := sql.Open("sqlite3", "tracker.db")
-	require.NoError(t, err)
+	db := setupDB(t)
 	defer db.Close()
 
 	store := NewParcelStore(db)
 	parcel := getTestParcel()
 
-	// add
+	// Add
 	id, err := store.Add(parcel)
-	require.NoError(t, err)
-	require.NotZero(t, id)
+	assert.NoError(t, err)
 
-	// set status
-	err = store.SetStatus(id, ParcelStatusSent)
-	require.NoError(t, err)
+	// Set status
+	newStatus := ParcelStatusSent
+	err = store.SetStatus(id, newStatus)
+	assert.NoError(t, err)
 
-	// check
-	storedParcel, err := store.Get(id)
-	require.NoError(t, err)
-	require.Equal(t, ParcelStatusSent, storedParcel.Status)
+	// Check
+	updatedParcel, err := store.Get(id)
+	assert.NoError(t, err)
+	assert.Equal(t, newStatus, updatedParcel.Status)
 }
 
 func TestGetByClient(t *testing.T) {
-	// prepare
-	db, err := sql.Open("sqlite3", "tracker.db")
-	require.NoError(t, err)
+	db := setupDB(t)
 	defer db.Close()
 
 	store := NewParcelStore(db)
-
 	parcels := []Parcel{
 		getTestParcel(),
 		getTestParcel(),
@@ -123,28 +131,63 @@ func TestGetByClient(t *testing.T) {
 	parcels[1].Client = client
 	parcels[2].Client = client
 
-	// add
+	// Add
 	for i := 0; i < len(parcels); i++ {
 		id, err := store.Add(parcels[i])
-		require.NoError(t, err)
-		require.NotZero(t, id)
+		assert.NoError(t, err)
+		assert.NotZero(t, id)
 
 		parcels[i].Number = id
 		parcelMap[id] = parcels[i]
 	}
 
-	// get by client
+	// Get by client
 	storedParcels, err := store.GetByClient(client)
-	require.NoError(t, err)
-	require.Len(t, storedParcels, len(parcels))
+	assert.NoError(t, err)
+	assert.Len(t, storedParcels, len(parcels))
 
-	// check
+	// Check
 	for _, parcel := range storedParcels {
 		expectedParcel, ok := parcelMap[parcel.Number]
-		require.True(t, ok)
-		require.Equal(t, expectedParcel.Client, parcel.Client)
-		require.Equal(t, expectedParcel.Status, parcel.Status)
-		require.Equal(t, expectedParcel.Address, parcel.Address)
-		require.Equal(t, expectedParcel.CreatedAt, parcel.CreatedAt)
+		assert.True(t, ok)
+		assert.Equal(t, expectedParcel, parcel)  // Проверяем всю структуру
 	}
+}
+
+func TestSetAddressInvalidStatus(t *testing.T) {
+	db := setupDB(t)
+	defer db.Close()
+
+	store := NewParcelStore(db)
+	parcel := getTestParcel()
+
+	// Add and set status to sent
+	id, err := store.Add(parcel)
+	assert.NoError(t, err)
+	err = store.SetStatus(id, ParcelStatusSent)
+	assert.NoError(t, err)
+
+	// Try to set address
+	err = store.SetAddress(id, "new address")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "нельзя изменить адрес")
+}
+
+func TestDeleteInvalidStatus(t *testing.T) {
+	db := setupDB(t)
+	defer db.Close()
+
+	store := NewParcelStore(db)
+	parcel := getTestParcel()
+
+	// Add and set status to sent
+	id, err := store.Add(parcel)
+	assert.NoError(t, err)
+	err = store.SetStatus(id, ParcelStatusSent)
+	assert.NoError(t, err)
+
+	// Try to delete
+	err = store.Delete(id)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "нельзя удалить посылку")
 }

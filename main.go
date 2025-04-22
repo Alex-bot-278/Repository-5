@@ -40,7 +40,7 @@ func (s ParcelService) Register(client int, address string) (Parcel, error) {
 
 	id, err := s.store.Add(parcel)
 	if err != nil {
-		return parcel, err
+		return Parcel{}, fmt.Errorf("ошибка регистрации посылки: %w", err)
 	}
 
 	parcel.Number = id
@@ -54,7 +54,7 @@ func (s ParcelService) Register(client int, address string) (Parcel, error) {
 func (s ParcelService) PrintClientParcels(client int) error {
 	parcels, err := s.store.GetByClient(client)
 	if err != nil {
-		return err
+		return fmt.Errorf("ошибка получения посылок клиента: %w", err)
 	}
 
 	fmt.Printf("Посылки клиента %d:\n", client)
@@ -70,7 +70,7 @@ func (s ParcelService) PrintClientParcels(client int) error {
 func (s ParcelService) NextStatus(number int) error {
 	parcel, err := s.store.Get(number)
 	if err != nil {
-		return err
+		return fmt.Errorf("ошибка получения статуса посылки: %w", err)
 	}
 
 	var nextStatus string
@@ -81,6 +81,8 @@ func (s ParcelService) NextStatus(number int) error {
 		nextStatus = ParcelStatusDelivered
 	case ParcelStatusDelivered:
 		return nil
+	default:
+		return fmt.Errorf("неизвестный статус посылки: %s", parcel.Status)
 	}
 
 	fmt.Printf("У посылки № %d новый статус: %s\n", number, nextStatus)
@@ -97,9 +99,37 @@ func (s ParcelService) Delete(number int) error {
 }
 
 func main() {
-	// настройте подключение к БД
+	// Настройка подключения к БД
+	db, err := sql.Open("sqlite", "tracker.db")
+	if err != nil {
+		fmt.Printf("Ошибка подключения к БД: %v\n", err)
+		return
+	}
+	defer db.Close()
 
-	store := // создайте объект ParcelStore функцией NewParcelStore
+	// Проверка подключения
+	err = db.Ping()
+	if err != nil {
+		fmt.Printf("Ошибка проверки подключения: %v\n", err)
+		return
+	}
+
+	// Создаем таблицу, если её нет
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS parcel (
+			number INTEGER PRIMARY KEY AUTOINCREMENT,
+			client INTEGER NOT NULL,
+			status TEXT NOT NULL,
+			address TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)
+	`)
+	if err != nil {
+		fmt.Printf("Ошибка создания таблицы: %v\n", err)
+		return
+	}
+
+	store := NewParcelStore(db)
 	service := NewParcelService(store)
 
 	// регистрация посылки
@@ -137,7 +167,6 @@ func main() {
 	err = service.Delete(p.Number)
 	if err != nil {
 		fmt.Println(err)
-		return
 	}
 
 	// вывод посылок клиента
