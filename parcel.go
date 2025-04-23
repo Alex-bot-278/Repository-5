@@ -20,12 +20,12 @@ func (s ParcelStore) Add(p Parcel) (int, error) {
 		p.Client, p.Status, p.Address, p.CreatedAt,
 	)
 	if err != nil {
-		return 0, fmt.Errorf("ошибка при добавлении посылки: %w", err)
+		return 0, fmt.Errorf("failed to add parcel: %w", err)
 	}
 
 	id, err := res.LastInsertId()
 	if err != nil {
-		return 0, fmt.Errorf("ошибка при получении ID: %w", err)
+		return 0, fmt.Errorf("failed to get last insert ID: %w", err)
 	}
 
 	return int(id), nil
@@ -41,9 +41,9 @@ func (s ParcelStore) Get(number int) (Parcel, error) {
 	err := row.Scan(&p.Number, &p.Client, &p.Status, &p.Address, &p.CreatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return Parcel{}, fmt.Errorf("посылка с номером %d не найдена", number)
+			return Parcel{}, fmt.Errorf("parcel not found: %w", err)
 		}
-		return Parcel{}, fmt.Errorf("ошибка при сканировании посылки: %w", err)
+		return Parcel{}, fmt.Errorf("failed to scan parcel: %w", err)
 	}
 
 	return p, nil
@@ -55,7 +55,7 @@ func (s ParcelStore) GetByClient(client int) ([]Parcel, error) {
 		client,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("ошибка при запросе посылок: %w", err)
+		return nil, fmt.Errorf("failed to query parcels: %w", err)
 	}
 	defer rows.Close()
 
@@ -63,13 +63,13 @@ func (s ParcelStore) GetByClient(client int) ([]Parcel, error) {
 	for rows.Next() {
 		var p Parcel
 		if err := rows.Scan(&p.Number, &p.Client, &p.Status, &p.Address, &p.CreatedAt); err != nil {
-			return nil, fmt.Errorf("ошибка при сканировании строки: %w", err)
+			return nil, fmt.Errorf("failed to scan row: %w", err)
 		}
 		res = append(res, p)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("ошибка при обработке результатов: %w", err)
+		return nil, fmt.Errorf("rows error: %w", err)
 	}
 
 	return res, nil
@@ -81,94 +81,58 @@ func (s ParcelStore) SetStatus(number int, status string) error {
 		status, number,
 	)
 	if err != nil {
-		return fmt.Errorf("ошибка при обновлении статуса: %w", err)
+		return fmt.Errorf("failed to update status: %w", err)
 	}
 
 	rowsAffected, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("ошибка при проверке обновления: %w", err)
+		return fmt.Errorf("failed to check rows affected: %w", err)
 	}
 
 	if rowsAffected == 0 {
-		return fmt.Errorf("посылка с номером %d не найдена", number)
+		return fmt.Errorf("parcel not found")
 	}
 
 	return nil
 }
 
 func (s ParcelStore) SetAddress(number int, address string) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("ошибка при начале транзакции: %w", err)
-	}
-	defer tx.Rollback()
-
-	var currentStatus string
-	err = tx.QueryRow(
-		"SELECT status FROM parcel WHERE number = ? FOR UPDATE",
-		number,
-	).Scan(&currentStatus)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("посылка с номером %d не найдена", number)
-		}
-		return fmt.Errorf("ошибка при проверке статуса: %w", err)
-	}
-
-	if currentStatus != ParcelStatusRegistered {
-		return fmt.Errorf("нельзя изменить адрес: статус должен быть %q, текущий: %q", 
-			ParcelStatusRegistered, currentStatus)
-	}
-
-	_, err = tx.Exec(
-		"UPDATE parcel SET address = ? WHERE number = ?",
-		address, number,
+	res, err := s.db.Exec(
+		"UPDATE parcel SET address = ? WHERE number = ? AND status = ?",
+		address, number, ParcelStatusRegistered,
 	)
 	if err != nil {
-		return fmt.Errorf("ошибка при обновлении адреса: %w", err)
+		return fmt.Errorf("failed to update address: %w", err)
 	}
 
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("ошибка при коммите транзакции: %w", err)
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("parcel not found or status not 'registered'")
 	}
 
 	return nil
 }
 
 func (s ParcelStore) Delete(number int) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("ошибка при начале транзакции: %w", err)
-	}
-	defer tx.Rollback()
-
-	var currentStatus string
-	err = tx.QueryRow(
-		"SELECT status FROM parcel WHERE number = ? FOR UPDATE",
-		number,
-	).Scan(&currentStatus)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("посылка с номером %d не найдена", number)
-		}
-		return fmt.Errorf("ошибка при проверке статуса: %w", err)
-	}
-
-	if currentStatus != ParcelStatusRegistered {
-		return fmt.Errorf("нельзя удалить посылку: статус должен быть %q, текущий: %q",
-			ParcelStatusRegistered, currentStatus)
-	}
-
-	_, err = tx.Exec(
-		"DELETE FROM parcel WHERE number = ?",
-		number,
+	res, err := s.db.Exec(
+		"DELETE FROM parcel WHERE number = ? AND status = ?",
+		number, ParcelStatusRegistered,
 	)
 	if err != nil {
-		return fmt.Errorf("ошибка при удалении посылки: %w", err)
+		return fmt.Errorf("failed to delete parcel: %w", err)
 	}
 
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("ошибка при коммите транзакции: %w", err)
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("parcel not found or status not 'registered'")
 	}
 
 	return nil

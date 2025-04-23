@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	_ "github.com/go-sql-driver/mysql"
+	_ "modernc.org/sqlite"
 )
 
 var (
@@ -26,14 +26,18 @@ func getTestParcel() Parcel {
 }
 
 func setupDB(t *testing.T) *sql.DB {
-	db, err := sql.Open("mysql", "user:password@/dbname")
+	db, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
 
-	err = db.Ping()
-	require.NoError(t, err)
-
-	// Очищаем таблицу перед тестами
-	_, err = db.Exec("DELETE FROM parcel")
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS parcel (
+			number INTEGER PRIMARY KEY AUTOINCREMENT,
+			client INTEGER NOT NULL,
+			status TEXT NOT NULL,
+			address TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)
+	`)
 	require.NoError(t, err)
 
 	return db
@@ -46,25 +50,21 @@ func TestAddGetDelete(t *testing.T) {
 	store := NewParcelStore(db)
 	parcel := getTestParcel()
 
-	// Add
 	id, err := store.Add(parcel)
-	assert.NoError(t, err)
-	assert.NotZero(t, id)
+	require.NoError(t, err)
+	require.NotZero(t, id)
 
-	// Get
 	storedParcel, err := store.Get(id)
-	assert.NoError(t, err)
-	assert.Equal(t, id, storedParcel.Number)  // Проверяем Number
+	require.NoError(t, err)
+	assert.Equal(t, id, storedParcel.Number)
 	assert.Equal(t, parcel.Client, storedParcel.Client)
 	assert.Equal(t, parcel.Status, storedParcel.Status)
 	assert.Equal(t, parcel.Address, storedParcel.Address)
 	assert.Equal(t, parcel.CreatedAt, storedParcel.CreatedAt)
 
-	// Delete
 	err = store.Delete(id)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	// Verify delete
 	_, err = store.Get(id)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, sql.ErrNoRows)
@@ -77,18 +77,15 @@ func TestSetAddress(t *testing.T) {
 	store := NewParcelStore(db)
 	parcel := getTestParcel()
 
-	// Add
 	id, err := store.Add(parcel)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	// Set address
 	newAddress := "new test address"
 	err = store.SetAddress(id, newAddress)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	// Check
 	updatedParcel, err := store.Get(id)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, newAddress, updatedParcel.Address)
 }
 
@@ -99,18 +96,15 @@ func TestSetStatus(t *testing.T) {
 	store := NewParcelStore(db)
 	parcel := getTestParcel()
 
-	// Add
 	id, err := store.Add(parcel)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	// Set status
 	newStatus := ParcelStatusSent
 	err = store.SetStatus(id, newStatus)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	// Check
 	updatedParcel, err := store.Get(id)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, newStatus, updatedParcel.Status)
 }
 
@@ -131,26 +125,23 @@ func TestGetByClient(t *testing.T) {
 	parcels[1].Client = client
 	parcels[2].Client = client
 
-	// Add
 	for i := 0; i < len(parcels); i++ {
 		id, err := store.Add(parcels[i])
-		assert.NoError(t, err)
-		assert.NotZero(t, id)
+		require.NoError(t, err)
+		require.NotZero(t, id)
 
 		parcels[i].Number = id
 		parcelMap[id] = parcels[i]
 	}
 
-	// Get by client
 	storedParcels, err := store.GetByClient(client)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Len(t, storedParcels, len(parcels))
 
-	// Check
 	for _, parcel := range storedParcels {
 		expectedParcel, ok := parcelMap[parcel.Number]
 		assert.True(t, ok)
-		assert.Equal(t, expectedParcel, parcel)  // Проверяем всю структуру
+		assert.Equal(t, expectedParcel, parcel)
 	}
 }
 
@@ -161,16 +152,14 @@ func TestSetAddressInvalidStatus(t *testing.T) {
 	store := NewParcelStore(db)
 	parcel := getTestParcel()
 
-	// Add and set status to sent
 	id, err := store.Add(parcel)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	err = store.SetStatus(id, ParcelStatusSent)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	// Try to set address
 	err = store.SetAddress(id, "new address")
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "нельзя изменить адрес")
+	assert.Contains(t, err.Error(), "status not 'registered'")
 }
 
 func TestDeleteInvalidStatus(t *testing.T) {
@@ -180,14 +169,12 @@ func TestDeleteInvalidStatus(t *testing.T) {
 	store := NewParcelStore(db)
 	parcel := getTestParcel()
 
-	// Add and set status to sent
 	id, err := store.Add(parcel)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	err = store.SetStatus(id, ParcelStatusSent)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	// Try to delete
 	err = store.Delete(id)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "нельзя удалить посылку")
+	assert.Contains(t, err.Error(), "status not 'registered'")
 }
